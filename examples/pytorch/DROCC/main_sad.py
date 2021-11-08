@@ -1,6 +1,6 @@
 from __future__ import print_function
-import os
 import numpy as np
+import os
 import argparse
 import torch
 import torch.nn as nn
@@ -8,50 +8,99 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from collections import OrderedDict
-from data_process_scripts.process_cifar import CIFAR10_Dataset
+from data_process_scripts.process_sad import SAD_Dataset
 from edgeml_pytorch.trainer.drocc_trainer import DROCCTrainer
 
-class CIFAR10_LeNet(nn.Module):
+class SAD_LeNet(nn.Module):
 
     def __init__(self):
-        super(CIFAR10_LeNet, self).__init__()
+        super(SAD_LeNet, self).__init__()
 
-        self.rep_dim = 128
+        self.rep_dim = 64
         self.pool = nn.MaxPool2d(2, 2)
 
-        self.conv1 = nn.Conv2d(3, 32, 5, bias=False, padding=2)
+        self.conv1 = nn.Conv2d(93, 32, 3, bias=False, padding=2)
         self.bn2d1 = nn.BatchNorm2d(32, eps=1e-04, affine=False)
-        self.conv2 = nn.Conv2d(32, 64, 5, bias=False, padding=2)
+        self.conv2 = nn.Conv2d(32, 64, 4, bias=False, padding=2)
         self.bn2d2 = nn.BatchNorm2d(64, eps=1e-04, affine=False)
-        self.conv3 = nn.Conv2d(64, 128, 5, bias=False, padding=2)
+        self.conv3 = nn.Conv2d(64, 128, 4, bias=False, padding=2)
         self.bn2d3 = nn.BatchNorm2d(128, eps=1e-04, affine=False)
-        self.fc1 = nn.Linear(128 * 4 * 4, self.rep_dim, bias=False)
+        self.fc1 = nn.Linear(256, self.rep_dim, bias=False)
         self.fc2 = nn.Linear(self.rep_dim, int(self.rep_dim/2), bias=False)
         self.fc3 = nn.Linear(int(self.rep_dim/2), 1, bias=False)
 
     def forward(self, x):
-        # print("0:", x.size()) # [256, 3, 32, 32]
+        # print("0: ", x.size()) # []
+        x = x.unsqueeze(3)
+        # print("1: ", x.size()) # []
         x = self.conv1(x)
-        # print("1:", x.size()) # [256, 32, 32, 32]
+        # print("2: ", x.size()) # []
         x = self.pool(F.leaky_relu(self.bn2d1(x)))
-        # print("2:", x.size()) # [256, 32, 16, 16]
+        # print("3: ", x.size()) # []
         x = self.conv2(x)
-        # print("3:", x.size()) # [256, 64, 16, 16]
+        # print("4: ", x.size()) # []
         x = self.pool(F.leaky_relu(self.bn2d2(x)))
-        # print("4:", x.size()) # [256, 64, 8, 8]
+        # print("5: ", x.size()) # []
         x = self.conv3(x)
-        # print("5:", x.size()) # [256, 128, 8, 8]
+        # print("6: ", x.size()) # []
         x = self.pool(F.leaky_relu(self.bn2d3(x)))
-        # print("6:", x.size()) # [256, 128, 4, 4]
+        # print("7: ", x.size()) # []
         x = x.view(x.size(0), -1)
-        # print("7:", x.size()) # [256, 2048]
+        # print("8: ", x.size()) # []
+        # x = self.fc1(x)
         x = F.leaky_relu(self.fc1(x))
-        # print("8:", x.size()) # [256, 128]
+        # print("9: ", x.size()) # []
         x = F.leaky_relu(self.fc2(x))
-        # print("9:", x.size()) # [256, 64]
+        # print("10: ", x.size()) # []
         x = self.fc3(x)
-        # print("10:", x.size()) # [256, 1]
+        # print("11: ", x.size()) # []
         return x
+
+
+# class LSTM_FC(nn.Module):
+#     """
+#     Single layer LSTM with a fully connected layer
+#     on the last hidden state
+#     """
+#     def __init__(self,
+#                  input_dim=3,
+#                  num_classes=1, 
+#                  num_hidden_nodes=8
+#     ):
+
+#         super(LSTM_FC, self).__init__()
+#         self.input_dim = input_dim
+#         self.num_classes = num_classes
+#         self.num_hidden_nodes = num_hidden_nodes
+#         self.encoder = nn.LSTM(input_size=self.input_dim, 
+#             hidden_size=self.num_hidden_nodes,
+#             num_layers=1, batch_first=True)
+#         self.fc = nn.Linear(self.num_hidden_nodes,
+#             self.num_classes)
+#         activ = nn.ReLU(True)
+
+#     def forward(self, input):
+#         # print("input:", input.size())
+#         features = self.encoder(input)[0][:,-1,:]
+#         # print("features:", features.size())
+#         # pdb.set_trace()
+#         logits = self.fc(features)
+#         # print("logits:", logits.size())
+#         return logits
+
+class CustomDataset(Dataset):
+    def __init__(self, data, labels):
+        self.data = data
+        self.labels = labels
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        return torch.from_numpy(self.data[idx]), (self.labels[idx]), torch.tensor([0])
+
 
 def adjust_learning_rate(epoch, total_epochs, only_ce_epochs, learning_rate, optimizer):
         """Adjust learning rate during training.
@@ -79,11 +128,17 @@ def adjust_learning_rate(epoch, total_epochs, only_ce_epochs, learning_rate, opt
 
         return optimizer
 
-def main():
 
-    dataset = CIFAR10_Dataset("data", args.normal_class)
+def main():
+    # Loading SAD Dataset
+    dataset = SAD_Dataset("data", args.normal_class)
     train_loader, test_loader = dataset.loaders(batch_size=args.batch_size)
-    model = CIFAR10_LeNet().to(device)
+
+    # Using LSTM model check dimension
+    # model = LSTM_FC(input_dim=13, num_classes=1, num_hidden_nodes=args.hd).to(device)
+    
+    # Using CNN model
+    model = SAD_LeNet().to(device)
     model = nn.DataParallel(model)
 
     if args.optim == 1:
@@ -120,7 +175,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='PyTorch Simple Training')
     parser.add_argument('--normal_class', type=int, default=0, metavar='N',
-                    help='CIFAR10 normal class index')
+                    help='SAD normal class index')
     parser.add_argument('--batch_size', type=int, default=128, metavar='N',
                         help='batch size for training')
     parser.add_argument('--epochs', type=int, default=100, metavar='N',
@@ -130,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--ascent_num_steps', type=int, default=100, metavar='N',
                         help='Number of gradient ascent steps')                        
     parser.add_argument('--hd', type=int, default=128, metavar='N',
-                        help='Num hidden nodes for LSTM model')
+                        help='Number of hidden nodes for LSTM model')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate')
     parser.add_argument('--ascent_step_size', type=float, default=0.001, metavar='LR',
